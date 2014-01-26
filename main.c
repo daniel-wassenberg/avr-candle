@@ -26,15 +26,16 @@ static uint8_t next_intensity(filter_state *state) {
 }
 
 // set up PWM on pin 5 (PORTB bit 0) using TIMER0 (OC0A)
-#define TIMER0_OVF_RATE     2343.75 // Hz
+#define TIMER0_OVF_RATE     (F_CPU / (64 * 256)) // Hz
 static void init_pwm() {
-    // COM0A    = 10  ("normal view")
+    // COM0A    = 00  (disabled)
     // COM0B    = 00  (disabled)
-    // WGM0     = 001 (phase-correct PWM, TOP = 0xff, OCR update at TOP)
-    // CS       = 010 (1:8 with IO clock: 2342 Hz PWM if clock is 9.6Mhz )
-    TCCR0A  = 0x81;         // 1000 0001
-    TCCR0B  = 0x02;         // 0000 0010
-    DDRB   |= 1 << DDB0;    // pin direction = OUT
+    // WGM0     = 000 (Normal mode)
+    // CS       = 011 (1:64 with IO clock: ~586 Hz PWM if clock is 9.6Mhz)
+    TCCR0A  = 0x00;         // 0000 0000
+    TCCR0B  = 0x03;         // 0000 0011
+    
+    DDRB = (1 << DDB0) | (1 << DDB3) | (1 << DDB4);
 }
 
 static volatile bool tick = false;
@@ -46,6 +47,33 @@ ISR(TIM0_OVF_vect) {
         tick = true;
         cycles = TIMER0_OVF_RATE / UPDATE_RATE;
     }
+    
+    OCR0A = TCNT0 + 1;
+}
+
+uint8_t pwm[3] = {};
+const uint8_t pwm_pin[3] = {1<<PB0, 1<<PB3, 1<<PB4};
+
+ISR(TIM0_COMPA_vect) {
+    uint8_t now, next;
+    do {
+        now = TCNT0;
+        next = 255;
+        
+        uint8_t port = pwm_pin[0] | pwm_pin[1] | pwm_pin[2];
+        
+        for (int i = 0; i < 3; i++) {
+            if (now >= pwm[i]) {
+                port &= ~pwm_pin[i];
+            } else if (!next || pwm[i] < next) {
+                next = pwm[i];
+            }
+        }
+        
+        PORTB = port;
+    } while (now >= next);
+    
+    if (next) OCR0A = next;
 }
 
 int main(void)
@@ -54,14 +82,17 @@ int main(void)
     init_pwm();
     
     // enable timer overflow interrupt
-    TIMSK0 = 1 << TOIE0;
-    sei();
+    TIMSK0 = (1 << TOIE0) | (1 << OCIE0A);
     
-    static filter_state candle = {};
+    static filter_state candle[3] = {};
     
     while(1)
     {
-        OCR0A   = next_intensity(&candle);
+        cli();
+        for (int i = 0; i < 3; i++) {
+            pwm[i] = next_intensity(&candle[i]);
+        }
+        sei();
         
         // sleep till next update
         while (!tick) sleep_mode();

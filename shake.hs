@@ -14,7 +14,8 @@ usbPort         = "usb"
 cFlags =     ["-Wall", "-Os",
     "-DF_CPU=" ++ show clock ++ "UL",
     "-mmcu=" ++ device,
-    "-Iinclude"]
+    "-Iinclude",
+    "-std=c99"]
 
 main = shakeArgs shakeOptions $ do
     want ["flicker.hex"]
