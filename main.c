@@ -17,11 +17,11 @@
 #include <avr/sleep.h>
 #include <stdbool.h>
 
-static uint8_t next_intensity() {
+static uint8_t next_intensity(filter_state *state) {
     const uint8_t m = 171, s = 2;
     const int16_t scale = (s * FILTER_STDDEV) / (255 - m);
     
-    int16_t x = m + flicker_filter(normal()) / scale;
+    int16_t x = m + flicker_filter(state, normal()) / scale;
     return x < 0 ? 0 : x > 255 ? 255 : x;
 }
 
@@ -57,12 +57,14 @@ int main(void)
     TIMSK0 = 1 << TOIE0;
     sei();
     
+    static filter_state candle = {};
+    
     while(1)
     {
-        // sleep till next update, then perform it.
+        OCR0A   = next_intensity(&candle);
+        
+        // sleep till next update
         while (!tick) sleep_mode();
         tick = false;
-        
-        OCR0A = next_intensity();
     }
 }

@@ -44,27 +44,24 @@
 // down to something that looked pleasant when running, yielding
 // the following filter.
 // 
-// stack usage: 10 bytes (plus whatever __mulsi3 uses - probably 2 bytes)
+// stack usage: 12 bytes (plus whatever __mulsi3 uses - probably 2 bytes)
 // 
 // [0] http://inkofpark.wordpress.com/2013/12/23/arduino-flickering-candle/
 // [1] https://github.com/mokus0/junkbox/blob/master/Haskell/Math/BiQuad.hs
 
 #include "filter.h"
 
-int16_t /* 15:13 */ flicker_filter(int8_t /* 7:5 */ x) {
+int16_t /* 15:13 */ flicker_filter(filter_state *state, int8_t /* 7:5 */ x) {
     const int16_t
-        /* 9:8 */ a1 = -480, // round ((-1.87503716) * (1L << 8 ))
-        /* 8:8 */ a2 =  226; // round (  0.88239861  * (1L << 8 ))
+        /* 9:8 */ a1 = -480, // round ((-1.87503716) * (1L << 8))
+        /* 8:8 */ a2 =  226; // round (  0.88239861  * (1L << 8))
         // b0 = 1, b1 = 2, b2 = 1; multiplies as shifts below
-    static int16_t
-        /* 15:6 */ d1 = 0,
-        /* 15:6 */ d2 = 0;
     
     int16_t /* 15:6 */ y;
     
-    y  = ((int16_t) x << 1)                           + (d1 >> 0);
-    d1 = ((int16_t) x << 2) - (a1 * (int32_t) y >> 8) + (d2 >> 0);
-    d2 = ((int16_t) x << 1) - (a2 * (int32_t) y >> 8);
+    y         = ((int16_t) x << 1)                           + (state->d1 >> 0);
+    state->d1 = ((int16_t) x << 2) - (a1 * (int32_t) y >> 8) + (state->d2 >> 0);
+    state->d2 = ((int16_t) x << 1) - (a2 * (int32_t) y >> 8);
     
     return y;
 }
