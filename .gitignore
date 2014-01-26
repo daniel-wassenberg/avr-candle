@@ -2,6 +2,7 @@
 *.elf
 *.hex
 *.bin
+*.su
 
 ##############
 # Global/OSX #
