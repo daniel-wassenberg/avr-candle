@@ -1,8 +1,8 @@
-// Candle-flicker LED program for ATtiny13A based on analysis at[0]
+// Candle-flicker LED program for ATmega4809 based on analysis at[0]
 // and IIR filter proposed and tested at [1].
 // 
 // Hardware/peripheral usage notes:
-// LED control output on pin 5.
+// LED control outputs on pin 20, 21 and 22.
 // Uses hardware PWM and the PWM timer's overflow to
 // count out the frames.  Keeps the RNG seed in EEPROM.
 // 
@@ -17,6 +17,8 @@
 #include <avr/sleep.h>
 #include <stdbool.h>
 
+#define F_CPU 1600000UL
+
 static uint8_t next_intensity(filter_state *state) {
     const uint8_t m = 171, s = 2;
     const int16_t scale = (s * FILTER_STDDEV) / (255 - m);
@@ -25,77 +27,75 @@ static uint8_t next_intensity(filter_state *state) {
     return x < 0 ? 0 : x > 255 ? 255 : x;
 }
 
-// set up PWM on pin 5 (PORTB bit 0) using TIMER0 (OC0A)
-#define TIMER0_OVF_RATE     (F_CPU / (64 * 256)) // Hz
+// set up PWM on pin 20, 21, 22 (PORTD pin 0, 1, 2) using Timer / Counter 0 (TCA0)
+#define TCA0_OVF_RATE    (F_CPU / (2 * 2 * 256)) // Hz
 static void init_pwm() {
-    // COM0A    = 00  (disabled)
-    // COM0B    = 00  (disabled)
-    // WGM0     = 000 (Normal mode)
-    // CS       = 011 (1:64 with IO clock: ~586 Hz PWM if clock is 9.6Mhz)
-    TCCR0A  = 0x00;         // 0000 0000
-    TCCR0B  = 0x03;         // 0000 0011
+    TCA0.SINGLE.CTRLA   = TCA_SINGLE_CLKSEL_DIV2_gc      // clock divide by 2
+                        | TCA_SINGLE_ENABLE_bm;          // TCA0 enabled
     
-    DDRB = (1 << DDB0) | (1 << DDB3) | (1 << DDB4);
+    TCA0.SINGLE.CTRLB   = TCA_SINGLE_WGMODE_DSBOTTOM_gc  // dual slope PWM mode
+                        | TCA_SINGLE_CMP0EN_bm           // compare 0 enabled
+                        | TCA_SINGLE_CMP1EN_bm           // compare 1 enabled
+                        | TCA_SINGLE_CMP2EN_bm;          // compare 2 enabled
+    
+    TCA0.SINGLE.PERBUF  = 0xFF;                          // counter top of 255
+    
+    TCA0.SINGLE.INTCTRL = TCA_SINGLE_OVF_bm;             // overflow interrupt enabled
+    
+    PORTD.DIR           = PIN0_bm                        // port D, pin 0 is output
+                        | PIN1_bm                        // port D, pin 1 is output
+                        | PIN2_bm;                       // port D, pin 2 is output
+    
+    PORTMUX.TCAROUTEA   = PORTMUX_TCA0_PORTD_gc;         // move TCA0 to port D
 }
 
 static volatile bool tick = false;
 
 // stack usage: 5 bytes
-ISR(TIM0_OVF_vect) {
+ISR(TCA0_OVF_vect) {
     static uint8_t cycles = 0;
+    
     if (!cycles--) {
         tick = true;
-        cycles = TIMER0_OVF_RATE / UPDATE_RATE;
+        cycles = TCA0_OVF_RATE / UPDATE_RATE;
     }
     
-    OCR0A = TCNT0 + 1;
+    // clear interrupt flag
+    TCA0.SINGLE.INTFLAGS = TCA_SINGLE_OVF_bm;
 }
 
-uint8_t pwm[3] = {};
-const uint8_t pwm_pin[3] = {1<<PB0, 1<<PB3, 1<<PB4};
-
-ISR(TIM0_COMPA_vect) {
-    uint8_t now, next;
-    do {
-        now = TCNT0;
-        next = 255;
-        
-        uint8_t port = pwm_pin[0] | pwm_pin[1] | pwm_pin[2];
-        
-        for (int i = 0; i < 3; i++) {
-            if (now >= pwm[i]) {
-                port &= ~pwm_pin[i];
-            } else if (!next || pwm[i] < next) {
-                next = pwm[i];
-            }
-        }
-        
-        PORTB = port;
-    } while (now >= next);
-    
-    if (next) OCR0A = next;
-}
+// pointers to timer 0 (TCA0) compare registers
+volatile uint16_t* pwm[3] = {&TCA0.SINGLE.CMP0BUF,
+                             &TCA0.SINGLE.CMP1BUF,
+                             &TCA0.SINGLE.CMP2BUF};
 
 int main(void)
 {
+    static filter_state candle[3] = {};
+    
+    CLKCTRL.MCLKCTRLB = CLKCTRL_PDIV_10X_gc     // main clock divide by 10
+                      | CLKCTRL_PEN_bp;         // enable clock divider
+    
+    PORTE.DIR         = PIN2_bm;                // port E, pin 2 is output
+            
     init_rand();
+    
     init_pwm();
     
-    // enable timer overflow interrupt
-    TIMSK0 = (1 << TOIE0) | (1 << OCIE0A);
-    
-    static filter_state candle[3] = {};
+    sei();
     
     while(1)
     {
-        cli();
         for (int i = 0; i < 3; i++) {
-            pwm[i] = next_intensity(&candle[i]);
+            *pwm[i] = next_intensity(&candle[i]);
         }
-        sei();
+        
+        // toggle led (pin 32) on Arduino Nano
+        PORTE.OUTTGL  = PIN2_bm;
         
         // sleep till next update
         while (!tick) sleep_mode();
+        
         tick = false;
     }
 }
